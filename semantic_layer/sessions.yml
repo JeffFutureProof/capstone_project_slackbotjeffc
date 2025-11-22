@@ -7,93 +7,91 @@ model:
   table: sessions
   schema: public
   
-  columns:
-    - name: session_id
-      type: integer
-      description: "Unique identifier for each session"
-      primary_key: true
-      
-    - name: user_id
-      type: integer
-      description: "Foreign key to users table"
-      foreign_key: true
-      
-    - name: activity_type
-      type: string
-      description: "Type of activity performed during the session"
-      dimension: true
-      
-    - name: duration_minutes
-      type: decimal
-      description: "Duration of session in minutes"
-      measure: true
-      
-    - name: session_date
-      type: timestamp
-      description: "Timestamp when session started"
-      dimension: true
 
-  dimensions:
-    - name: activity_type
-      type: categorical
-      description: "Type of activity performed (e.g., browse, purchase, support)"
-      
-    - name: session_date
-      type: date
-      description: "Date of session"
-      
-    - name: session_month
-      type: date
-      description: "Month of session for trend analysis"
-      sql: "DATE_TRUNC('month', session_date)"
-      
-    - name: session_year
-      type: integer
-      description: "Year of session"
-      sql: "EXTRACT(YEAR FROM session_date)"
+fields:
+  - name: session_id
+    type: serial4
+    description: Unique identifier for the session.
+    role: x
 
-  measures:
-    - name: total_sessions
-      type: count
-      description: "Total number of sessions"
-      sql: "COUNT(DISTINCT session_id)"
-      
-    - name: active_users
-      type: count
-      description: "Number of distinct users with at least one session"
-      sql: "COUNT(DISTINCT user_id)"
-      
-    - name: average_duration
-      type: average
-      description: "Average session duration in minutes"
-      sql: "AVG(duration_minutes)"
-      
-    - name: total_duration_minutes
-      type: sum
-      description: "Total duration of all sessions in minutes"
-      sql: "SUM(duration_minutes)"
-      
-    - name: sessions_by_activity
-      type: count
-      description: "Number of sessions grouped by activity type"
-      sql: "COUNT(DISTINCT session_id)"
-      group_by: ["activity_type"]
-      
-    - name: duration_by_activity
-      type: sum
-      description: "Total duration in minutes grouped by activity type"
-      sql: "SUM(duration_minutes)"
-      group_by: ["activity_type"]
-      
-    - name: avg_session_minutes
-      type: average
-      description: "Average session duration in minutes"
-      sql: "AVG(duration_minutes)"
+  - name: user_id
+    type: serial4
+    description: Unique identifier for the user.
+    role: relationship
 
-  relationships:
-    - type: many_to_one
-      from: sessions
-      to: users
-      foreign_key: user_id
-      description: "Many sessions belong to one user"
+  - name: session_date
+    type: timestamp
+    description: Date and time when the session occurred.
+    role: dimension
 
+  - name: duration_minutes
+    type: int4
+    description: Duration of the session in minutes.
+    role: dimension
+
+  - name: activity_type
+    type: varchar(255)
+    description: The main activity performed during the session (e.g., browse, listen, read).
+    role: dimension
+
+relationships:
+  - users.user_id -> sessions.user_id
+
+measures:
+  - name: session_count
+    formula: count(*)
+    description: quantity of total sessions
+
+  - name: avg_session_minutes 
+    formula: AVG(duration_minutes)
+    description: average duration of sessions in minutes
+
+  - name: sessions_per_user
+    formula: COUNT(*) / COUNT (DISTINCT user_id)
+    description: Count the quantity of sessions per user.
+
+  - name: sessions_by_activity_type
+    formula: activity_type, COUNT(*) AS session_count
+    description: Quantity of sessions by activity type (browse, listen, 	read, 
+
+  - name: minutes_per_user
+    formula: SUM(duration_minutes) / COUNT(DISTINCT user_id)
+    description:  How many total minutes per user and what is the average duration of a user session?
+
+golden_queries:
+  - name: Sessions KPI data over time	
+    description: Core KPI snapshot of sessions over designated time.
+    sql: 
+SELECT
+    COUNT(*) AS session_count,
+    COUNT(DISTINCT user_id) AS distinct_users,
+    ROUND(AVG(duration_minutes), 2) AS avg_session_minutes,
+    percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_minutes) AS median_session_minutes,
+    SUM(duration_minutes) AS total_minutes
+FROM sessions
+WHERE session_date::date = '2025-09-01';
+
+  - name: sessions_by_activity_type
+    description: Sessions by activity type, total duration and average session duration by type
+    sql: 
+SELECT 
+    activity_type,
+    COUNT(*) AS session_count,
+    SUM(duration_minutes) AS total_minutes,
+    ROUND(AVG(duration_minutes), 2) AS avg_session_minutes
+FROM sessions
+GROUP BY activity_type
+ORDER BY total_minutes DESC;
+
+  - name: Activity mix (sessions & minutes)
+    description: Activity types broken down by sessions and durations
+    sql: 
+SELECT
+  activity_type,
+  COUNT(*) AS sessions,
+  ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 2) AS sessions_pct,
+  SUM(duration_minutes) AS minutes,
+  ROUND(100.0 * SUM(duration_minutes) / SUM(SUM(duration_minutes)) OVER (), 2) AS minutes_pct
+FROM sessions
+GROUP BY activity_type
+ORDER BY minutes DESC;

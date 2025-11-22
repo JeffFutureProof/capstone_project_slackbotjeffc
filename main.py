@@ -4,8 +4,14 @@ from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 
-from project_name.subsystem_1.router import route_message
-from project_name.subsystem_2.pandas_agent import run_data_question, run_subscription_prediction
+from core.subsystem_1.router import route_message
+from core.subsystem_2.pandas_agent import (
+    run_data_question,
+    run_subscription_prediction,
+    run_sql_query,
+    list_golden_queries,
+    generate_sql_query,
+)
 
 # ----------------------------------------
 # Load environment variables
@@ -42,11 +48,18 @@ def handle_message_events(body, say):
     if decision.intent == "help":
         say(
             "👋 I'm your analyst agent.\n\n"
+            "*For non-technical users:*\n"
             "You can ask me things like:\n"
             "• *Which regions had the most users last month?*\n"
             "• *What products drove the most revenue last holiday season?*\n"
             "• *What is churn rate by plan?*\n"
-            "• *Predict new subscriptions for next year?*"
+            "• *Predict new subscriptions for next year?*\n\n"
+            "*For data scientists:*\n"
+            "• *List queries* - See available golden queries\n"
+            "• *Create SQL query for [table] [filters]* - Generate SQL queries\n"
+            "  Example: \"Create SQL query for subscriptions in EU\"\n"
+            "• Paste SQL queries directly (SELECT only)\n"
+            "• Use queries from semantic layer as templates"
         )
         return
 
@@ -68,6 +81,39 @@ def handle_message_events(body, say):
         except Exception as e:
             say(
                 "I tried to generate predictions but hit an error ⚠️.\n"
+                f"_Internal error:_ `{e}`"
+            )
+        return
+
+    if decision.intent == "sql_query":
+        try:
+            answer = run_sql_query(text)
+            say(answer)
+        except Exception as e:
+            say(
+                "I tried to execute your SQL query but hit an error ⚠️.\n"
+                f"_Internal error:_ `{e}`"
+            )
+        return
+
+    if decision.intent == "list_queries":
+        try:
+            answer = list_golden_queries()
+            say(answer)
+        except Exception as e:
+            say(
+                "I tried to list golden queries but hit an error ⚠️.\n"
+                f"_Internal error:_ `{e}`"
+            )
+        return
+
+    if decision.intent == "generate_sql":
+        try:
+            answer = generate_sql_query(text, decision.dataset)
+            say(answer)
+        except Exception as e:
+            say(
+                "I tried to generate a SQL query but hit an error ⚠️.\n"
                 f"_Internal error:_ `{e}`"
             )
         return

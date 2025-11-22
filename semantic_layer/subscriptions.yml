@@ -7,116 +7,125 @@ model:
   table: subscriptions
   schema: public
   
-  columns:
-    - name: subscription_id
-      type: integer
-      description: "Unique identifier for each subscription"
-      primary_key: true
-      
-    - name: user_id
-      type: integer
-      description: "Foreign key to users table"
-      foreign_key: true
-      
-    - name: plan
-      type: string
-      description: "Subscription plan name (e.g., basic, premium, enterprise)"
-      dimension: true
-      
-    - name: start_date
-      type: date
-      description: "Date when subscription started"
-      dimension: true
-      
-    - name: end_date
-      type: date
-      description: "Date when subscription ended (NULL if still active)"
-      dimension: true
-      nullable: true
+fields:
+  - name: subscription_id
+    type: serial4
+    description: Unique identifier for the subscription.
+    role: relationship
 
-  dimensions:
-    - name: plan
-      type: categorical
-      description: "Subscription plan type"
-      
-    - name: start_date
-      type: date
-      description: "Subscription start date"
-      
-    - name: end_date
-      type: date
-      description: "Subscription end date"
-      
-    - name: subscription_status
-      type: categorical
-      description: "Current status of subscription (active, churned)"
-      sql: |
-        CASE 
-          WHEN end_date IS NULL OR end_date > CURRENT_DATE THEN 'active'
-          WHEN end_date <= CURRENT_DATE THEN 'churned'
-        END
-      
-    - name: subscription_month
-      type: date
-      description: "Month of subscription start for trend analysis"
-      sql: "DATE_TRUNC('month', start_date)"
+  - name: user_id
+    type: int4
+    description: Foreign key linking to the users table.
+    role: relationship
 
-  measures:
-    - name: total_subscriptions
-      type: count
-      description: "Total number of subscriptions"
-      sql: "COUNT(DISTINCT subscription_id)"
-      
-    - name: active_subscriptions
-      type: count
-      description: "Number of currently active subscriptions"
-      sql: |
-        COUNT(DISTINCT CASE 
-          WHEN start_date <= CURRENT_DATE 
-            AND (end_date IS NULL OR end_date > CURRENT_DATE) 
-          THEN subscription_id 
-        END)
-      
-    - name: churned_subscriptions
-      type: count
-      description: "Number of churned subscriptions"
-      sql: |
-        COUNT(DISTINCT CASE 
-          WHEN end_date IS NOT NULL AND end_date <= CURRENT_DATE 
-          THEN subscription_id 
-        END)
-      
-    - name: churn_rate
-      type: percentage
-      description: "Percentage of subscriptions that have churned"
-      sql: |
-        CASE 
-          WHEN COUNT(DISTINCT subscription_id) > 0 
-          THEN (COUNT(DISTINCT CASE WHEN end_date IS NOT NULL AND end_date <= CURRENT_DATE THEN subscription_id END)::FLOAT / 
-                COUNT(DISTINCT subscription_id)::FLOAT * 100)
-          ELSE 0 
-        END
-      
-    - name: new_subscriptions
-      type: count
-      description: "Number of new subscriptions in a given period"
-      sql: "COUNT(DISTINCT subscription_id)"
-      
-    - name: active_by_plan
-      type: count
-      description: "Number of active subscriptions by plan"
-      sql: |
-        COUNT(DISTINCT CASE 
-          WHEN start_date <= CURRENT_DATE 
-            AND (end_date IS NULL OR end_date > CURRENT_DATE) 
-          THEN subscription_id 
-        END)
-      group_by: ["plan"]
+  - name: plan
+    type: varchar(255)
+    description: The subscription plan (e.g., free, monthly, annual).
+    role: entity
 
-  relationships:
-    - type: many_to_one
-      from: subscriptions
-      to: users
-      foreign_key: user_id
-      description: "Many subscriptions belong to one user"
+  - name: start_date
+    type: timestamp
+    description: Date when the subscription started.
+    role: dimension
 
+  - name: end_date
+    type: timestamp
+    description: Date when the subscription ended (if applicable).
+    role: dimension
+
+  - name: status
+    type: varchar(255)
+    description: Current status of the subscription (e.g., active, canceled, expired).
+    role: dimension
+
+relationships:
+  - subscriptions.subscription_id -> payments.subscription_id
+  - users.user_id -> subscriptions.user_id
+
+measures:
+  - name: active_subscriptions_on_date(d)
+    formula: start_date <= d AND (end_date IS NULL OR end_date > d)
+    description: What is the quantity of active subscriptions on a certain date
+
+  - name: new_subscription_starts
+    formula: COUNT(*) WHERE start_date = CURRENT_DATE)
+    description: New subscriptions that started in current day
+
+  - name: subscription_cancels
+    formula: Cancels (24h)=COUNT(subscriptions where end_date≥NOW()−INTERVAL′24hours′ AND end_date<NOW())
+    description: Subscription cancels within the past 24 hours
+
+  - name: duration_days
+    formula: Convert (end_date − start_date) to days as numeric using EXTRACT(EPOCH …)/86400
+    description: Subscriptions by duration that is an integer thus we can round.
+
+golden_queries:
+  - name: New_starts_cancels_net_adds
+    description: New starts, cancels, net adds in a period
+New Starts = COUNT(subscriptions where start_date between start_period and end_period)
+Cancels = COUNT(subscriptions where end_date between start_period and end_period)
+Net Adds = New Starts − Cancels
+    sql: 
+WITH date_metrics AS (
+    SELECT
+        COUNT(*) FILTER (
+            WHERE s.start_date BETWEEN '2024-06-01' AND '2025-06-01'
+        ) AS new_starts,
+        COUNT(*) FILTER (
+            WHERE s.end_date BETWEEN '2024-06-01' AND '2025-06-01'
+        ) AS cancels
+    FROM subscriptions AS s
+)
+SELECT
+    new_starts,
+    cancels,
+    (new_starts - cancels) AS net_adds
+FROM date_metrics;
+
+  - name: Churn_rate_for_a_period
+    description:  Churn rate measures the percentage of subscriptions (or customers) that ended or canceled during a defined time period, relative to the average number of active subscriptions during that same period.
+sql:
+WITH bounds AS (
+    SELECT 
+        '2024-06-01'::timestamp AS start_ts,
+        '2025-06-01'::timestamp AS end_ts
+),
+days AS (
+    -- Generate one record per day in the date range
+    SELECT generate_series(
+        (SELECT start_ts::date FROM bounds),
+        (SELECT (end_ts - INTERVAL '1 day')::date FROM bounds),
+        INTERVAL '1 day'
+    )::date AS day
+),
+active_by_day AS (
+    -- Active subscriptions definition: start_date <= day AND (end_date IS NULL OR end_date > day)
+    SELECT 
+        d.day,
+        COUNT(*) AS active_subscriptions
+    FROM days d
+    JOIN subscriptions AS s
+      ON s.start_date <= d.day::timestamp
+     AND (s.end_date IS NULL OR s.end_date > d.day::timestamp)
+    GROUP BY d.day
+),
+avg_active AS (
+    SELECT 
+        AVG(active_subscriptions)::numeric AS avg_active_subscriptions
+    FROM active_by_day
+),
+cancels AS (
+    -- Cancels where end_date within the defined date range
+    SELECT 
+        COUNT(*)::numeric AS cancels
+    FROM subscriptions AS s
+    CROSS JOIN bounds b
+    WHERE s.end_date >= b.start_ts
+      AND s.end_date <  b.end_ts
+)
+SELECT
+    c.cancels,
+    a.avg_active_subscriptions,
+    ROUND(100.0 * c.cancels / NULLIF(a.avg_active_subscriptions, 0), 2) AS churn_rate_pct
+FROM cancels c
+CROSS JOIN avg_active a;

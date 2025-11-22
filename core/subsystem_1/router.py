@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-Intent = Literal["help", "small_talk", "data_question", "prediction", "unknown"]
+Intent = Literal["help", "small_talk", "data_question", "prediction", "sql_query", "list_queries", "generate_sql", "unknown"]
 Dataset = Literal["users", "payments", "subscriptions", "sessions", "none"]
 
 
@@ -28,6 +28,16 @@ SESSIONS_KEYWORDS = ["session", "sessions", "engagement", "activity", "usage", "
 # Prediction-related keywords
 PREDICTION_KEYWORDS = ["predict", "forecast", "future", "estimate", "projection", "next year", "will be", "going to"]
 
+# SQL query detection keywords
+SQL_KEYWORDS = ["select", "with", "show", "explain", "describe"]
+SQL_QUERY_INDICATORS = ["sql:", "query:", "run sql", "execute sql", "run query"]
+
+# Golden queries listing keywords
+LIST_QUERIES_KEYWORDS = ["list queries", "show queries", "available queries", "golden queries", "what queries", "query examples"]
+
+# SQL generation keywords
+GENERATE_SQL_KEYWORDS = ["create sql", "generate sql", "make sql", "write sql", "build sql", "sql query for", "create me sql", "generate me sql"]
+
 # Generic “analysis-y” phrases that indicate a data question
 DATA_PHRASES = [
     "how many", "what is", "what are", "show me",
@@ -45,7 +55,7 @@ HOLIDAY_KEYWORDS = [
 def route_message(text: str) -> RouteDecision:
     """
     Router for Slack messages:
-    - intent: help / small_talk / data_question / prediction / unknown
+    - intent: help / small_talk / data_question / prediction / sql_query / list_queries / unknown
     - dataset: users / payments / subscriptions / sessions / none
     """
     lower = text.lower().strip()
@@ -56,6 +66,47 @@ def route_message(text: str) -> RouteDecision:
             intent="help",
             dataset="none",
             reason="Matched help keywords",
+        )
+
+    # 1.5) Check for generate SQL request (before list queries to catch "create sql query for...")
+    if any(k in lower for k in GENERATE_SQL_KEYWORDS):
+        # Try to identify dataset for context
+        dataset: Dataset = "none"
+        if any(k in lower for k in USERS_KEYWORDS):
+            dataset = "users"
+        if any(k in lower for k in PAYMENTS_KEYWORDS):
+            dataset = "payments"
+        if any(k in lower for k in SUBSCRIPTIONS_KEYWORDS):
+            dataset = "subscriptions"
+        if any(k in lower for k in SESSIONS_KEYWORDS):
+            dataset = "sessions"
+        
+        return RouteDecision(
+            intent="generate_sql",
+            dataset=dataset,
+            reason="Matched generate SQL keywords",
+        )
+
+    # 1.6) Check for list queries request
+    if any(k in lower for k in LIST_QUERIES_KEYWORDS):
+        return RouteDecision(
+            intent="list_queries",
+            dataset="none",
+            reason="Matched list queries keywords",
+        )
+
+    # 1.7) Check for SQL queries - detect SQL syntax or explicit SQL indicators
+    is_sql_query = (
+        any(text.strip().lower().startswith(k) for k in SQL_KEYWORDS) or
+        any(indicator in lower for indicator in SQL_QUERY_INDICATORS) or
+        ("select" in lower and ("from" in lower or "where" in lower))
+    )
+    
+    if is_sql_query:
+        return RouteDecision(
+            intent="sql_query",
+            dataset="none",
+            reason="Detected SQL query syntax",
         )
 
     # 2) Try to identify dataset first

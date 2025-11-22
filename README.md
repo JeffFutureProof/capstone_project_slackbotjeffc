@@ -123,7 +123,7 @@ Type `help` or "what can you do" to see available commands and example questions
 ```
 Capstone_project_slackbotjeffc/
 ├── main.py                          # Main entry point, Slack app initialization
-├── project_name/
+├── core/
 │   ├── app.py                       # Alternative app configuration
 │   ├── subsystem_1/
 │   │   └── router.py                # Message routing logic
@@ -176,8 +176,8 @@ Capstone_project_slackbotjeffc/
 
 ### Adding New Query Types
 
-1. Add keywords to the router in `project_name/subsystem_1/router.py`
-2. Implement query logic in `project_name/subsystem_2/pandas_agent.py`
+1. Add keywords to the router in `core/subsystem_1/router.py`
+2. Implement query logic in `core/subsystem_2/pandas_agent.py`
 3. Update the `run_data_question` function to handle new query patterns
 
 ### Testing

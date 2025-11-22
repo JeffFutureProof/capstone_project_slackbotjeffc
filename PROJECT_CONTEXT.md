@@ -4,9 +4,9 @@
 
 The **Talk-to-Your-Data Slackbot** enables Marketing and Sales teams to ask natural-language questions about customer behavior, subscription lifecycle, payments, user growth, and engagement — all powered directly by a Postgres database.
 
-The agent interprets questions, determines which database tables are relevant (Users, Sessions, Subscriptions, Payments), retrieves the necessary data, performs analysis using PandasAI v3, and returns clear insights directly inside Slack.
+The agent interprets questions, determines which database tables are relevant (Users, Sessions, Subscriptions, Payments), retrieves the necessary data, performs analysis using PandasAI v3, and returns clear insights directly inside Slack. Additionally, the system provides **trending analysis and future predictions** using linear regression to forecast subscription growth and sales trends.
 
-This system exists to support holiday-season revenue targeting, user segmentation, geo/device insights, and growth analytics **without requiring SQL knowledge** from business users.
+This system exists to support holiday-season revenue targeting, user segmentation, geo/device insights, growth analytics, and **forward-looking business planning** **without requiring SQL knowledge** from business users.
 
 ## System Scope
 
@@ -24,6 +24,7 @@ This system exists to support holiday-season revenue targeting, user segmentatio
 - Query routing (deciding which table(s) to access based on the question)
 - Generating SQL or Pandas transformations using PandasAI v3
 - Returning summaries, charts, or text insights inside Slack
+- **Trending analysis and predictions** (forecasting future subscription growth using linear regression on historical data)
 
 ### Out of Scope (for MVP)
 
@@ -52,6 +53,7 @@ Handles receipt, cleaning, and routing of user queries:
    - "churn", "subscriptions", "plan" → Subscriptions
    - "users", "country", "device type" → Users
    - "sessions", "activity", "duration" → Sessions
+   - "predict", "forecast", "future", "estimate" + "subscriptions" → Prediction Engine
 
 ### Engine Stage
 
@@ -66,6 +68,14 @@ Handles data access, semantic understanding, reasoning, and result formatting:
 3. **Answer Formatter & Guardrails**  
    Summarizes results for Slack output, formats top-N lists and bullet points using simple wording. Handles edge cases such as "no data" scenarios and ambiguous queries.
 
+4. **Prediction Engine**  
+   Analyzes historical subscription data to identify trends and generate future forecasts:
+   - Extracts monthly subscription counts from the last 3 years of historical data
+   - Calculates linear regression trends using least squares method (y = mx + b)
+   - Projects next 12 months of new subscriptions based on identified trends
+   - Provides trend direction indicators (increasing/decreasing/stable)
+   - Returns formatted predictions with monthly breakdowns and summary statistics
+
 ### Supporting Infrastructure
 
 - **Postgres Database**  
@@ -79,12 +89,16 @@ Handles data access, semantic understanding, reasoning, and result formatting:
 ### Inputs
 
 - **Natural language questions from Slack**  
-  (e.g., "Which countries saw the highest user signup growth last month?")
+  (e.g., "Which countries saw the highest user signup growth last month?", "Predict new subscriptions for next year")
 
 - **Query context passed to PandasAI:**
   - Selected dataset (users/subscriptions/payments/sessions)
   - Semantic-layer metadata
   - Time window (optional)
+
+- **Historical data for predictions:**
+  - Monthly subscription start dates from the last 3 years
+  - Minimum 6 months of historical data required for reliable predictions
 
 ### Outputs
 
@@ -92,6 +106,12 @@ Handles data access, semantic understanding, reasoning, and result formatting:
 - Aggregations (counts, sums, averages, churn rate)
 - Recommended marketing segments
 - Simple charts (bar charts, line charts, pie charts)
+- **Future predictions:**
+  - Total predicted new subscriptions for next year
+  - Monthly breakdown of forecasted subscriptions
+  - Average subscriptions per month
+  - Trend direction (increasing/decreasing/stable)
+  - Confidence indicators based on historical data quality
 
 ## Design Rationale
 
@@ -117,3 +137,14 @@ Golden queries included in the schema (e.g., revenue by method, new starts vs ca
 ### Extensibility
 
 New tables or metrics can be added to the semantic layer without rewriting the agent.
+
+### Predictive Capabilities
+
+The prediction engine uses simple linear regression to identify trends in historical subscription data. This approach:
+
+- **Simplicity**: No complex ML models required, making predictions explainable and maintainable
+- **Reliability**: Works well for steady growth patterns common in subscription businesses
+- **Transparency**: Users can understand the trend-based methodology
+- **Extensibility**: Can be enhanced with seasonal adjustments, multiple regression variables, or more sophisticated time-series models as needed
+
+The system currently predicts new subscriptions, but the architecture supports extending predictions to other metrics (revenue, active subscriptions, churn rates) using the same trend analysis approach.

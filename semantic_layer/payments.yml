@@ -7,94 +7,114 @@ model:
   table: payments
   schema: public
   
-  columns:
-    - name: payment_id
-      type: integer
-      description: "Unique identifier for each payment"
-      primary_key: true
-      
-    - name: user_id
-      type: integer
-      description: "Foreign key to users table"
-      foreign_key: true
-      
-    - name: amount_usd
-      type: decimal
-      description: "Payment amount in USD"
-      measure: true
-      
-    - name: payment_date
-      type: date
-      description: "Date when payment was processed"
-      dimension: true
-      
-    - name: payment_method
-      type: string
-      description: "Method of payment (e.g., credit_card, paypal, bank_transfer)"
-      dimension: true
 
-  dimensions:
-    - name: payment_date
-      type: date
-      description: "Date of payment transaction"
-      
-    - name: payment_month
-      type: date
-      description: "Month of payment for trend analysis"
-      sql: "DATE_TRUNC('month', payment_date)"
-      
-    - name: payment_method
-      type: categorical
-      description: "Method used for payment"
-      
-    - name: payment_year
-      type: integer
-      description: "Year of payment"
-      sql: "EXTRACT(YEAR FROM payment_date)"
+fields:
+  - name: payment_id
+    type: serial4
+    description: Unique identifier for the payment.
+    role: entity
 
-  measures:
-    - name: total_revenue
-      type: sum
-      description: "Total revenue from all payments"
-      sql: "COALESCE(SUM(amount_usd), 0)"
-      
-    - name: total_payments
-      type: count
-      description: "Total number of payment transactions"
-      sql: "COUNT(DISTINCT payment_id)"
-      
-    - name: average_payment
-      type: average
-      description: "Average payment amount"
-      sql: "AVG(amount_usd)"
-      
-    - name: revenue_by_method
-      type: sum
-      description: "Total revenue grouped by payment method"
-      sql: "COALESCE(SUM(amount_usd), 0)"
-      group_by: ["payment_method"]
-      
-    - name: revenue_by_month
-      type: sum
-      description: "Total revenue grouped by month"
-      sql: "COALESCE(SUM(amount_usd), 0)"
-      group_by: ["payment_month"]
-      
-    - name: payment_count
-      type: count
-      description: "Number of payments"
-      sql: "COUNT(DISTINCT payment_id)"
+  - name: subscription_id
+    type: int4
+    description: Foreign key linking to the subscriptions table.
+    role: relationship
+    related_table: subscriptions
+    related_field: subscription_id
 
-  relationships:
-    - type: many_to_one
-      from: payments
-      to: users
-      foreign_key: user_id
-      description: "Many payments belong to one user"
-      
-    - type: many_to_one
-      from: payments
-      to: subscriptions
-      foreign_key: subscription_id
-      description: "Many payments can be associated with a subscription (if subscription_id exists)"
+  - name: payment_date
+    type: timestamp
+    description: Date when the payment was made.
+    role: dimension
 
+  - name: amount_usd
+    type: numeric(10, 2)
+    description: The payment amount in USD.
+    role: measure
+
+  - name: method
+    type: varchar(255
+    description: The payment method used (e.g., card, paypal).
+    role: entity
+
+relationships:
+ - subscriptions.subscription_id -> payments.subscription_id
+
+measures:
+  - name: total_revenue_usd
+    formula: SUM(total_amount)
+    description: Total revenue generated from all payments.
+
+  - name: payment_count
+    formula: count(*)
+    description: Volume of Successful payments for subscriptions
+
+  - name: avg_payment_amount
+    formula: AVG(amount_avg)
+    description: Average value of a payment
+
+  - name: daily_revenue_usd
+    formula:   
+  	     DATE(payment_date) AS payment_day,
+  	     SUM(amount_usd) AS daily_revenue_usd
+    description: Daily revenue received per specific date
+
+golden_queries:
+  - name: Total Revenue By Date
+    description: Total revenue obtained over a period of time between two dates.	
+    sql: 
+SELECT 
+    SUM(amount_usd) AS total_revenue_usd
+FROM payments
+WHERE payment_date >= '2025-01-01 00:00:00.000'
+  AND payment_date <  '2025-06-30 00:00:00.000';
+
+  - name: Subscription Lifetime Revenue Top 10
+    description: The amount revenue of the Top 10 paying subsciptions.
+    sql: 
+SELECT 
+    subscription_id,
+    SUM(amount_usd) AS lifetime_revenue_usd
+FROM payments
+GROUP BY subscription_id
+ORDER BY lifetime_revenue_usd DESC
+LIMIT 10;
+
+  - name: Revenue by Method
+    description: The amount of revenue by payment method.
+    sql: 
+SELECT 
+    method,
+    SUM(amount_usd) AS revenue_usd,
+    COUNT(*) AS payment_count,
+    ROUND(
+        100.0 * SUM(amount_usd) / SUM(SUM(amount_usd)) OVER (),
+        2
+    ) AS revenue_pct
+FROM payments
+WHERE payment_date >= '2025-01-01 00:00:00.000'
+  AND payment_date <  '2025-06-30 00:00:00.000'
+GROUP BY method
+ORDER BY revenue_usd DESC;
+
+  - name: Rolling 7-day revenue
+    description: Revenue total over a rolling 7-day period of time.
+    sql: 
+
+WITH daily AS (
+    SELECT 
+        DATE(payment_date) AS day,
+        SUM(amount_usd) AS revenue_usd
+    FROM payments
+    WHERE payment_date >= '2025-01-01 00:00:00.000'
+      AND payment_date <  '2025-06-30 00:00:00.000'
+    GROUP BY DATE(payment_date)
+)
+SELECT 
+    day,
+    revenue_usd,
+    SUM(revenue_usd) OVER (
+        ORDER BY day
+        ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+    ) AS revenue_usd_7d
+FROM daily
+ORDER BY day;

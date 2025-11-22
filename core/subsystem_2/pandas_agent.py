@@ -1,7 +1,10 @@
-# project_name/subsystem_2/pandas_agent.py
+# core/subsystem_2/pandas_agent.py
 
 import os
-from typing import List, Optional, Tuple
+import re
+import yaml
+from pathlib import Path
+from typing import List, Optional, Tuple, Dict, Any
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -586,3 +589,417 @@ def run_data_question(dataset_name: str, question: str) -> str:
         f"Router gave dataset='{dataset_name}'. Try mentioning one of those explicitly "
         "or rephrasing your question."
     )
+
+
+# ---------- SQL QUERY EXECUTION FOR DATA SCIENTISTS ----------
+
+def _is_safe_sql_query(sql: str) -> bool:
+    """
+    Validate that SQL query is safe (read-only).
+    Only allows SELECT, WITH, EXPLAIN, DESCRIBE statements.
+    """
+    sql_upper = sql.strip().upper()
+    
+    # Block dangerous keywords
+    dangerous_keywords = [
+        "DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "CREATE",
+        "TRUNCATE", "GRANT", "REVOKE", "EXEC", "EXECUTE"
+    ]
+    
+    for keyword in dangerous_keywords:
+        if keyword in sql_upper:
+            return False
+    
+    # Only allow safe statement types
+    safe_prefixes = ["SELECT", "WITH", "EXPLAIN", "DESCRIBE", "SHOW"]
+    sql_start = sql_upper.split()[0] if sql_upper.split() else ""
+    
+    return sql_start in safe_prefixes
+
+
+def _extract_sql_from_message(text: str) -> Optional[str]:
+    """
+    Extract SQL query from message text.
+    Handles cases where SQL is wrapped in code blocks or prefixed with "sql:".
+    """
+    # Remove code block markers if present
+    text = re.sub(r'^```(?:sql)?\s*', '', text, flags=re.IGNORECASE | re.MULTILINE)
+    text = re.sub(r'```\s*$', '', text, flags=re.IGNORECASE | re.MULTILINE)
+    
+    # Remove "sql:" or "query:" prefix if present
+    text = re.sub(r'^(?:sql|query):\s*', '', text, flags=re.IGNORECASE | re.MULTILINE)
+    
+    return text.strip() if text.strip() else None
+
+
+def _format_sql_results(rows: List[Dict[str, Any]], max_rows: int = 100) -> str:
+    """
+    Format SQL query results for Slack display.
+    """
+    if not rows:
+        return "Query executed successfully but returned no rows."
+    
+    if len(rows) > max_rows:
+        rows = rows[:max_rows]
+        warning = f"\n⚠️ _Showing first {max_rows} of {len(rows)} rows_\n"
+    else:
+        warning = ""
+    
+    # Get column names
+    columns = list(rows[0].keys())
+    
+    # Format as table
+    lines = ["📊 *Query Results:*" + warning, ""]
+    
+    # Header
+    header = " | ".join(str(col) for col in columns)
+    lines.append(f"`{header}`")
+    lines.append("`" + "-" * len(header) + "`")
+    
+    # Rows
+    for row in rows:
+        row_values = [str(row.get(col, "")) for col in columns]
+        row_str = " | ".join(row_values)
+        lines.append(f"`{row_str}`")
+    
+    if len(rows) == max_rows:
+        lines.append(f"\n_... and {len(rows) - max_rows} more rows_")
+    
+    lines.append(f"\n*Total rows returned:* {len(rows)}")
+    
+    return "\n".join(lines)
+
+
+def run_sql_query(sql_text: str) -> str:
+    """
+    Execute a SQL query safely (read-only) and return formatted results.
+    Designed for data scientists who want to write custom SQL queries.
+    
+    Args:
+        sql_text: SQL query text (may include code blocks or "sql:" prefix)
+    
+    Returns:
+        Formatted query results or error message
+    """
+    try:
+        # Extract SQL from message
+        sql = _extract_sql_from_message(sql_text)
+        
+        if not sql:
+            return (
+                "⚠️ *SQL Query Error*\n"
+                "No SQL query found. Please provide a SELECT query.\n"
+                "You can wrap it in code blocks: ```sql\nSELECT ...\n```"
+            )
+        
+        # Validate SQL is safe
+        if not _is_safe_sql_query(sql):
+            return (
+                "⚠️ *Security Error*\n"
+                "Only SELECT, WITH, EXPLAIN, and DESCRIBE queries are allowed.\n"
+                "Write operations (INSERT, UPDATE, DELETE, DROP, etc.) are not permitted."
+            )
+        
+        # Execute query
+        conn = _get_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(sql)
+                rows = cur.fetchall()
+                
+                # Convert to list of dicts
+                result_rows = [dict(row) for row in rows]
+                
+                return _format_sql_results(result_rows)
+                
+        finally:
+            conn.close()
+            
+    except psycopg2.Error as e:
+        return (
+            f"⚠️ *Database Error*\n"
+            f"```{str(e)}```\n"
+            f"Please check your SQL syntax and try again."
+        )
+    except Exception as e:
+        return (
+            f"⚠️ *Error executing query*\n"
+            f"```{str(e)}```"
+        )
+
+
+# ---------- GOLDEN QUERIES LISTING ----------
+
+def _load_golden_queries() -> Dict[str, List[Dict[str, str]]]:
+    """
+    Load golden queries from semantic layer YAML files.
+    
+    Returns:
+        Dictionary mapping table names to lists of golden queries
+    """
+    semantic_layer_dir = Path(__file__).parent.parent.parent / "semantic_layer"
+    queries = {}
+    
+    yaml_files = {
+        "users": semantic_layer_dir / "users.yml",
+        "subscriptions": semantic_layer_dir / "subscriptions.yml",
+        "payments": semantic_layer_dir / "payments.yml",
+        "sessions": semantic_layer_dir / "sessions.yml",
+    }
+    
+    for table_name, yaml_file in yaml_files.items():
+        if not yaml_file.exists():
+            continue
+            
+        try:
+            with open(yaml_file, 'r') as f:
+                content = yaml.safe_load(f)
+                
+            # Extract golden_queries section
+            if content and "golden_queries" in content:
+                queries[table_name] = content["golden_queries"]
+        except Exception:
+            # Skip files that can't be parsed
+            continue
+    
+    return queries
+
+
+def list_golden_queries() -> str:
+    """
+    List all available golden queries from the semantic layer.
+    Useful for data scientists to see example queries they can use or modify.
+    
+    Returns:
+        Formatted list of golden queries grouped by table
+    """
+    queries = _load_golden_queries()
+    
+    if not queries:
+        return (
+            "📋 *Available Golden Queries*\n\n"
+            "No golden queries found in semantic layer files.\n"
+            "Check that semantic_layer/*.yml files exist and contain golden_queries sections."
+        )
+    
+    lines = [
+        "📋 *Available Golden Queries*\n",
+        "These are pre-defined SQL queries from the semantic layer.\n"
+        "You can use them directly or modify them for your needs.\n",
+    ]
+    
+    for table_name, table_queries in queries.items():
+        if not table_queries:
+            continue
+            
+        lines.append(f"\n*{table_name.upper()} Table:*")
+        
+        for i, query in enumerate(table_queries, 1):
+            name = query.get("name", f"Query {i}")
+            description = query.get("description", "No description")
+            sql = query.get("sql", "").strip()
+            
+            lines.append(f"\n{i}. *{name}*")
+            lines.append(f"   _{description}_")
+            
+            if sql:
+                # Show first few lines of SQL
+                sql_preview = "\n".join(sql.split("\n")[:3])
+                if len(sql.split("\n")) > 3:
+                    sql_preview += "\n   ..."
+                lines.append(f"   ```sql\n   {sql_preview}\n   ```")
+    
+    lines.append(
+        "\n💡 *Tip:* You can copy any of these queries and modify them, "
+        "or use them directly by pasting the SQL into a message."
+    )
+    
+    return "\n".join(lines)
+
+
+# ---------- SQL QUERY GENERATION ----------
+
+# EU countries list for filtering
+EU_COUNTRIES = [
+    "Austria", "Belgium", "Bulgaria", "Croatia", "Cyprus", "Czech Republic",
+    "Denmark", "Estonia", "Finland", "France", "Germany", "Greece", "Hungary",
+    "Ireland", "Italy", "Latvia", "Lithuania", "Luxembourg", "Malta", "Netherlands",
+    "Poland", "Portugal", "Romania", "Slovakia", "Slovenia", "Spain", "Sweden"
+]
+
+
+def _detect_filters_from_text(text: str, dataset: str) -> Dict[str, Any]:
+    """
+    Extract filters and requirements from natural language text.
+    
+    Returns:
+        Dictionary with detected filters (region, status, date_range, etc.)
+    """
+    lower = text.lower()
+    filters = {}
+    
+    # Region/Country filters
+    if "eu" in lower or "europe" in lower or "european" in lower:
+        filters["region"] = "EU"
+    elif "us" in lower or "usa" in lower or "united states" in lower:
+        filters["region"] = "US"
+    
+    # Status filters
+    if "active" in lower:
+        filters["status"] = "active"
+    elif "churned" in lower or "canceled" in lower or "cancelled" in lower:
+        filters["status"] = "churned"
+    
+    # Date filters
+    if "last month" in lower or "past month" in lower:
+        filters["date_range"] = "last_month"
+    elif "last quarter" in lower or "past quarter" in lower:
+        filters["date_range"] = "last_quarter"
+    elif "last year" in lower or "past year" in lower:
+        filters["date_range"] = "last_year"
+    
+    # Grouping
+    if "by plan" in lower or "group by plan" in lower:
+        filters["group_by"] = "plan"
+    elif "by country" in lower or "group by country" in lower:
+        filters["group_by"] = "country"
+    
+    return filters
+
+
+def _generate_subscriptions_sql(text: str, filters: Dict[str, Any]) -> str:
+    """
+    Generate SQL query for subscriptions based on natural language request.
+    """
+    sql_parts = ["SELECT"]
+    
+    # Determine what to select
+    if filters.get("group_by") == "plan":
+        sql_parts.append("    plan,")
+        sql_parts.append("    COUNT(*) AS subscription_count")
+    elif filters.get("group_by") == "country":
+        sql_parts.append("    u.country,")
+        sql_parts.append("    COUNT(*) AS subscription_count")
+    else:
+        sql_parts.append("    s.subscription_id,")
+        sql_parts.append("    s.plan,")
+        sql_parts.append("    s.start_date,")
+        sql_parts.append("    s.end_date,")
+        sql_parts.append("    s.status,")
+        if filters.get("region"):
+            sql_parts.append("    u.country")
+    
+    # FROM clause
+    if filters.get("region") or filters.get("group_by") == "country":
+        sql_parts.append("FROM subscriptions s")
+        sql_parts.append("INNER JOIN users u ON s.user_id = u.user_id")
+    else:
+        sql_parts.append("FROM subscriptions s")
+    
+    # WHERE clause
+    where_conditions = []
+    
+    # Region filter (EU)
+    if filters.get("region") == "EU":
+        eu_countries_str = ", ".join([f"'{country}'" for country in EU_COUNTRIES])
+        where_conditions.append(f"u.country IN ({eu_countries_str})")
+    
+    # Status filter
+    if filters.get("status") == "active":
+        where_conditions.append("(s.end_date IS NULL OR s.end_date > CURRENT_DATE)")
+    elif filters.get("status") == "churned":
+        where_conditions.append("s.end_date IS NOT NULL AND s.end_date <= CURRENT_DATE")
+    
+    # Date range filter
+    if filters.get("date_range") == "last_month":
+        where_conditions.append("s.start_date >= CURRENT_DATE - INTERVAL '30 days'")
+    elif filters.get("date_range") == "last_quarter":
+        where_conditions.append("s.start_date >= CURRENT_DATE - INTERVAL '90 days'")
+    elif filters.get("date_range") == "last_year":
+        where_conditions.append("s.start_date >= CURRENT_DATE - INTERVAL '365 days'")
+    
+    if where_conditions:
+        sql_parts.append("WHERE " + " AND ".join(where_conditions))
+    
+    # GROUP BY clause
+    if filters.get("group_by"):
+        if filters.get("group_by") == "plan":
+            sql_parts.append("GROUP BY plan")
+        elif filters.get("group_by") == "country":
+            sql_parts.append("GROUP BY u.country")
+    
+    # ORDER BY clause
+    if filters.get("group_by"):
+        sql_parts.append("ORDER BY subscription_count DESC")
+    else:
+        sql_parts.append("ORDER BY s.start_date DESC")
+    
+    # LIMIT clause (if not grouping, limit results)
+    if not filters.get("group_by"):
+        sql_parts.append("LIMIT 100")
+    
+    return "\n".join(sql_parts) + ";"
+
+
+def generate_sql_query(text: str, dataset: str) -> str:
+    """
+    Generate a SQL query from natural language request.
+    Uses semantic layer information to create appropriate queries.
+    
+    Args:
+        text: Natural language request (e.g., "create sql query for subscriptions in EU")
+        dataset: Detected dataset (users, subscriptions, payments, sessions)
+    
+    Returns:
+        Generated SQL query as formatted string
+    """
+    if dataset == "none":
+        return (
+            "⚠️ *SQL Generation*\n"
+            "I couldn't determine which table you want to query.\n"
+            "Please specify: *users*, *subscriptions*, *payments*, or *sessions*.\n\n"
+            "Example: \"Create SQL query for subscriptions in EU\""
+        )
+    
+    # Extract filters from text
+    filters = _detect_filters_from_text(text, dataset)
+    
+    # Generate SQL based on dataset
+    if dataset == "subscriptions":
+        sql = _generate_subscriptions_sql(text, filters)
+    elif dataset == "users":
+        # Basic users query - can be extended
+        sql = "SELECT * FROM users LIMIT 100;"
+    elif dataset == "payments":
+        # Basic payments query - can be extended
+        sql = "SELECT * FROM payments LIMIT 100;"
+    elif dataset == "sessions":
+        # Basic sessions query - can be extended
+        sql = "SELECT * FROM sessions LIMIT 100;"
+    else:
+        sql = "SELECT * FROM " + dataset + " LIMIT 100;"
+    
+    # Format response
+    lines = [
+        "📝 *Generated SQL Query*",
+        "",
+        f"Based on your request: \"{text}\"",
+        "",
+        "```sql",
+        sql,
+        "```",
+        "",
+        "💡 *You can:*",
+        "• Copy this query and paste it to execute",
+        "• Modify it as needed",
+        "• Use `list queries` to see more examples"
+    ]
+    
+    # Add explanation if filters were detected
+    if filters:
+        lines.append("")
+        lines.append("*Applied filters:*")
+        for key, value in filters.items():
+            lines.append(f"• {key}: {value}")
+    
+    return "\n".join(lines)
