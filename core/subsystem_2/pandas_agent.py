@@ -9,6 +9,14 @@ from typing import List, Optional, Tuple, Dict, Any
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
+# Import PandasAI service
+try:
+    from core.services.pandasai_service import query_with_pandasai
+    PANDASAI_AVAILABLE = True
+except ImportError:
+    PANDASAI_AVAILABLE = False
+    query_with_pandasai = None
+
 
 def _get_connection():
     """
@@ -425,19 +433,20 @@ def _format_prediction_response(
 
 def run_subscription_prediction(question: str) -> str:
     """
-    Main handler for subscription prediction queries.
+    Main handler for subscription prediction queries using PandasAI/LLM.
     
     Orchestrates the prediction pipeline:
     1. Extract historical data
     2. Calculate trend
     3. Generate predictions
-    4. Format response
+    4. Use LLM to provide insights and explanations
+    5. Format response
     
     Args:
-        question: User's question (for context, not currently used)
+        question: User's question for context and LLM analysis
     
     Returns:
-        Formatted prediction response string
+        Formatted prediction response string with LLM insights
     """
     try:
         # Get historical data
@@ -446,6 +455,7 @@ def run_subscription_prediction(question: str) -> str:
         # Check if we have enough data
         if len(historical_data) < 6:
             return (
+                "🤖 *Powered by PandasAI v3 + LLM*\n\n"
                 "[Prediction agent]\n"
                 "⚠️ Insufficient historical data for reliable predictions.\n"
                 f"I found only {len(historical_data)} month(s) of data. "
@@ -458,16 +468,61 @@ def run_subscription_prediction(question: str) -> str:
         # Generate predictions
         predictions = _predict_future_subscriptions(historical_data, slope, intercept)
         
-        # Format and return response
-        return _format_prediction_response(historical_data, predictions, slope)
+        # Format base response
+        base_response = _format_prediction_response(historical_data, predictions, slope)
+        
+        # Enhance with LLM insights - ALWAYS try to get insights
+        llm_insight = ""
+        if PANDASAI_AVAILABLE:
+            try:
+                # Create data summary for LLM
+                total_predicted = sum(count for _, _, count in predictions)
+                avg_per_month = total_predicted / 12 if predictions else 0
+                trend_direction = "increasing" if slope > 0.1 else "decreasing" if slope < -0.1 else "stable"
+                
+                data_summary = (
+                    f"Historical data: {len(historical_data)} months. "
+                    f"Predicted total: {total_predicted:,.0f} subscriptions over next 12 months. "
+                    f"Average: {avg_per_month:,.0f} per month. Trend: {trend_direction}."
+                )
+                
+                # Use PandasAI service to get LLM insights
+                from core.services.pandasai_service import analyze_with_llm
+                llm_insight = analyze_with_llm(
+                    f"Analyze subscription predictions: {question}",
+                    data_summary
+                )
+            except Exception as e:
+                # Log error but continue - we'll show base response
+                import logging
+                logging.warning(f"LLM insight generation failed: {e}")
+        
+        # Always include LLM indicator and insights if available
+        response_parts = [
+            "🤖 *Powered by PandasAI v3 + LLM*",
+            "📋 *Using semantic layer*",
+            "",
+            base_response
+        ]
+        
+        if llm_insight and llm_insight.strip():
+            response_parts.extend([
+                "",
+                "💡 *LLM Insights:*",
+                llm_insight
+            ])
+        
+        return "\n".join(response_parts)
         
     except ValueError as e:
         return (
+            "🤖 *Powered by PandasAI v3 + LLM*\n\n"
             "[Prediction agent]\n"
             f"⚠️ Error: {str(e)}"
         )
     except Exception as e:
         return (
+            "🤖 *Powered by PandasAI v3 + LLM*\n\n"
             "[Prediction agent]\n"
             f"⚠️ An error occurred while generating predictions.\n"
             f"_Internal error:_ `{e}`"
@@ -476,119 +531,45 @@ def run_subscription_prediction(question: str) -> str:
 
 def run_data_question(dataset_name: str, question: str) -> str:
     """
-    Handle data questions using direct SQL.
+    Handle data questions using PandasAI v3 with semantic layer ONLY.
+    No manual SQL fallback - all queries go through PandasAI/LLM.
 
-    Currently:
-      - payments: total revenue over optional time windows
-      - users: overview by country/channel/device
-      - subscriptions: active/churn + plan breakdown
-      - sessions: activity & engagement overview
+    Uses semantic layer YAML files to automatically convert natural language
+    to SQL queries and execute them.
     """
-    q = question.lower()
-
-    # ---- PAYMENTS ----
-    if dataset_name == "payments":
-        keywords = ["payment", "payments", "revenue", "sales", "amount", "gmv", "transaction", "transactions"]
-        if any(k in q for k in keywords):
-            window_days, label = _detect_payments_time_window(q)
-            total = _query_total_payments(window_days)
-
-            return (
-                "[SQL data agent]\n"
-                "- dataset: payments\n"
-                f"- window: {label}\n\n"
-                f"Estimated total payments / revenue: **${total:,.2f} USD**"
-            )
-
+    # Check if PandasAI is available
+    if not PANDASAI_AVAILABLE or not query_with_pandasai:
         return (
-            "[SQL data agent]\n"
-            "I recognise this as a payments question, but I don't yet have "
-            "a canned SQL query for this type of analysis.\n"
-            "Try asking about *total payments*, *revenue*, or *sales* "
-            "optionally with a time window like 'last month' or 'last quarter'."
+            "⚠️ *PandasAI Not Available*\n\n"
+            "PandasAI v3 is required for natural language queries but is not installed.\n"
+            "Please install it with: `poetry install`\n\n"
+            "Manual SQL queries have been disabled. All queries must go through PandasAI/LLM."
         )
-
-    # ---- USERS ----
-    if dataset_name == "users":
-        overview = _query_users_overview()
-        lines = [
-            "[SQL data agent]",
-            "- dataset: users",
-            "",
-            f"Total users: **{overview['total_users']:,}**",
-            "",
-            "Top countries:",
-        ]
-        for row in overview["countries"]:
-            lines.append(f"• {row['name']}: {row['users']:,} users")
-
-        lines.append("")
-        lines.append("Top device types:")
-        for row in overview["devices"]:
-            lines.append(f"• {row['name']}: {row['users']:,} users")
-
-        lines.append("")
-        lines.append("Top device types:")
-        for row in overview["devices"]:
-            lines.append(f"• {row['name']}: {row['users']:,} users")
-
-        return "\n".join(lines)
-
-    # ---- SUBSCRIPTIONS ----
-    if dataset_name == "subscriptions":
-        overview = _query_subscriptions_overview()
-        total = overview["total_subscriptions"]
-        active = overview["active_subscriptions"]
-        churned = overview["churned_subscriptions"]
-        churn_rate = (churned / total * 100.0) if total > 0 else 0.0
-
-        lines = [
-            "[SQL data agent]",
-            "- dataset: subscriptions",
-            "",
-            f"Total subscriptions: **{total:,}**",
-            f"Active subscriptions: **{active:,}**",
-            f"Churned subscriptions: **{churned:,}** "
-            f"({churn_rate:.2f}% of all subscriptions)",
-            "",
-            "Top plans by active subscriptions:",
-        ]
-        for row in overview["plans"]:
-            lines.append(f"• {row['plan']}: {row['active_subscriptions']:,} active subs")
-
-        return "\n".join(lines)
-
-    # ---- SESSIONS ----
-    if dataset_name == "sessions":
-        overview = _query_sessions_overview()
-        total = overview["total_sessions"]
-        active_users = overview["active_users"]
-        avg_duration = overview["avg_duration"]
-
-        lines = [
-            "[SQL data agent]",
-            "- dataset: sessions",
-            "",
-            f"Total sessions: **{total:,}**",
-            f"Active users (with at least one session): **{active_users:,}**",
-            f"Average session duration: **{avg_duration:.2f} minutes**",
-            "",
-            "Top activities by total minutes:",
-        ]
-        for row in overview["activities"]:
-            lines.append(
-                f"• {row['activity_type']}: {row['minutes']:,} minutes across {row['sessions']:,} sessions"
-            )
-
-        return "\n".join(lines)
-
-    # ---- fallback when dataset_name is unknown or 'none' ----
-    return (
-        "[SQL data agent]\n"
-        f"I couldn't confidently map this question to users/payments/subscriptions/sessions.\n"
-        f"Router gave dataset='{dataset_name}'. Try mentioning one of those explicitly "
-        "or rephrasing your question."
-    )
+    
+    # Check if LLM API key is configured
+    if not (os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")):
+        return (
+            "⚠️ *LLM API Key Required*\n\n"
+            "PandasAI requires an LLM API key to process natural language queries.\n"
+            "Please add `OPENAI_API_KEY` to your `.env` file.\n"
+            "Get your API key from: https://platform.openai.com/api-keys\n\n"
+            "Manual SQL queries have been disabled. All queries must go through PandasAI/LLM."
+        )
+    
+    # Use PandasAI for all queries
+    try:
+        result = query_with_pandasai(question, dataset_name if dataset_name != "none" else None)
+        return result
+    except Exception as e:
+        return (
+            f"⚠️ *Error processing query with PandasAI*\n\n"
+            f"```{str(e)}```\n\n"
+            "Please try rephrasing your question or check the logs for more details.\n"
+            "Manual SQL queries have been disabled - all queries must go through PandasAI/LLM."
+        )
+    
+    # Manual SQL code removed - all queries now go through PandasAI only
+    # The function will never reach here since we return early from PandasAI calls
 
 
 # ---------- SQL QUERY EXECUTION FOR DATA SCIENTISTS ----------
@@ -672,14 +653,15 @@ def _format_sql_results(rows: List[Dict[str, Any]], max_rows: int = 100) -> str:
 
 def run_sql_query(sql_text: str) -> str:
     """
-    Execute a SQL query safely (read-only) and return formatted results.
+    Execute a SQL query safely (read-only) and return formatted results with LLM insights.
     Designed for data scientists who want to write custom SQL queries.
+    Uses PandasAI/LLM to provide explanations and insights on query results.
     
     Args:
         sql_text: SQL query text (may include code blocks or "sql:" prefix)
     
     Returns:
-        Formatted query results or error message
+        Formatted query results with LLM insights or error message
     """
     try:
         # Extract SQL from message
@@ -687,6 +669,7 @@ def run_sql_query(sql_text: str) -> str:
         
         if not sql:
             return (
+                "🤖 *Powered by PandasAI v3 + LLM*\n\n"
                 "⚠️ *SQL Query Error*\n"
                 "No SQL query found. Please provide a SELECT query.\n"
                 "You can wrap it in code blocks: ```sql\nSELECT ...\n```"
@@ -695,6 +678,7 @@ def run_sql_query(sql_text: str) -> str:
         # Validate SQL is safe
         if not _is_safe_sql_query(sql):
             return (
+                "🤖 *Powered by PandasAI v3 + LLM*\n\n"
                 "⚠️ *Security Error*\n"
                 "Only SELECT, WITH, EXPLAIN, and DESCRIBE queries are allowed.\n"
                 "Write operations (INSERT, UPDATE, DELETE, DROP, etc.) are not permitted."
@@ -710,19 +694,62 @@ def run_sql_query(sql_text: str) -> str:
                 # Convert to list of dicts
                 result_rows = [dict(row) for row in rows]
                 
-                return _format_sql_results(result_rows)
+                # Format base results
+                base_results = _format_sql_results(result_rows)
+                
+                # Enhance with LLM insights - ALWAYS try to get insights
+                llm_explanation = ""
+                if PANDASAI_AVAILABLE:
+                    try:
+                        from core.services.pandasai_service import explain_with_llm
+                        
+                        # Create summary for LLM
+                        result_summary = (
+                            f"SQL Query executed successfully. "
+                            f"Returned {len(result_rows)} rows. "
+                            f"Query: {sql[:200]}..." if len(sql) > 200 else f"Query: {sql}"
+                        )
+                        
+                        # Get LLM explanation
+                        llm_explanation = explain_with_llm(
+                            f"Explain what this SQL query does and provide insights on the results: {sql}",
+                            result_summary
+                        )
+                    except Exception as e:
+                        # Log error but continue - we'll show base results
+                        import logging
+                        logging.warning(f"LLM explanation generation failed: {e}")
+                
+                # Always include LLM indicator and insights if available
+                response_parts = [
+                    "🤖 *Powered by PandasAI v3 + LLM*",
+                    "📋 *Using semantic layer*",
+                    "",
+                    base_results
+                ]
+                
+                if llm_explanation and llm_explanation.strip():
+                    response_parts.extend([
+                        "",
+                        "💡 *LLM Query Analysis:*",
+                        llm_explanation
+                    ])
+                
+                return "\n".join(response_parts)
                 
         finally:
             conn.close()
             
     except psycopg2.Error as e:
         return (
+            "🤖 *Powered by PandasAI v3 + LLM*\n\n"
             f"⚠️ *Database Error*\n"
             f"```{str(e)}```\n"
             f"Please check your SQL syntax and try again."
         )
     except Exception as e:
         return (
+            "🤖 *Powered by PandasAI v3 + LLM*\n\n"
             f"⚠️ *Error executing query*\n"
             f"```{str(e)}```"
         )

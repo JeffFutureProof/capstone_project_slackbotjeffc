@@ -78,6 +78,10 @@ The system is organized into two main stages:
    DB_PASS=your-db-password
    DB_NAME=your-db-name
    DB_SSLMODE=require
+   
+   # PandasAI Configuration (Optional - enables natural language queries)
+   OPENAI_API_KEY=your-openai-api-key
+   LLM_MODEL=gpt-4o-mini
    ```
 
 ## Usage
@@ -193,8 +197,45 @@ The project includes a `tests/` directory for unit tests. Add tests for:
 - `slack-sdk`: Slack SDK core
 - `python-dotenv`: Environment variable management
 - `psycopg2-binary`: PostgreSQL adapter for Python
+- `pandasai`: PandasAI v3 for natural language query processing
+- `pandasai-litellm`: LiteLLM integration for PandasAI
+- `pyyaml`: YAML parsing for semantic layer
 
 See `pyproject.toml` for the complete list of dependencies.
+
+## PandasAI v3 Integration
+
+The bot uses **PandasAI v3** with semantic layer integration to automatically convert natural language questions into SQL queries. This eliminates the need for manual SQL branches for most queries.
+
+### Setup PandasAI
+
+1. **Get an OpenAI API Key** (or use another LLM provider):
+   - Sign up at https://platform.openai.com
+   - Create an API key at https://platform.openai.com/api-keys
+
+2. **Add to `.env` file**:
+   ```env
+   OPENAI_API_KEY=your-api-key-here
+   LLM_MODEL=gpt-4o-mini  # Optional: defaults to gpt-4o-mini
+   ```
+
+3. **Semantic Layer**: The bot automatically uses your `semantic_layer/*.yml` files to understand your data schema and generate accurate queries.
+
+### How It Works
+
+- **Natural Language → SQL**: PandasAI uses your semantic layer YAML files to understand table relationships, dimensions, and measures
+- **Automatic Query Generation**: No need to write SQL for common queries - just ask in natural language
+- **Fallback Support**: If PandasAI is not configured, the bot falls back to manual SQL queries
+
+### Example Queries
+
+With PandasAI enabled, you can ask:
+- "What is the total revenue from payments in the EU last quarter?"
+- "Show me active subscriptions grouped by plan and country"
+- "Which users have the highest lifetime value?"
+- "What's the average session duration by activity type?"
+
+The bot will automatically generate and execute the appropriate SQL using your semantic layer definitions.
 
 ## Limitations (MVP Scope)
 

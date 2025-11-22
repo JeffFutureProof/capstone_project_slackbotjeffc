@@ -47,26 +47,33 @@ def handle_message_events(body, say):
 
     if decision.intent == "help":
         say(
-            "👋 I'm your analyst agent.\n\n"
+            "👋 I'm your analyst agent powered by PandasAI v3!\n\n"
             "*For non-technical users:*\n"
-            "You can ask me things like:\n"
+            "Ask me questions in natural language:\n"
             "• *Which regions had the most users last month?*\n"
             "• *What products drove the most revenue last holiday season?*\n"
             "• *What is churn rate by plan?*\n"
+            "• *Show me subscriptions in the EU*\n"
             "• *Predict new subscriptions for next year?*\n\n"
             "*For data scientists:*\n"
             "• *List queries* - See available golden queries\n"
             "• *Create SQL query for [table] [filters]* - Generate SQL queries\n"
             "  Example: \"Create SQL query for subscriptions in EU\"\n"
             "• Paste SQL queries directly (SELECT only)\n"
-            "• Use queries from semantic layer as templates"
+            "• Use queries from semantic layer as templates\n\n"
+            "*Powered by:* PandasAI v3 with semantic layer integration"
         )
         return
 
     if decision.intent == "data_question":
         try:
             answer = run_data_question(decision.dataset, text)
-            say(f"🧠 *Answer from `{decision.dataset}` data:*\n{answer}")
+            # The answer already includes indicators (PandasAI or manual SQL)
+            # so we just need to format it nicely
+            if decision.dataset != "none":
+                say(f"🧠 *Answer from `{decision.dataset}` data:*\n{answer}")
+            else:
+                say(answer)
         except Exception as e:
             say(
                 "I tried to run that analysis on the data but hit an error ⚠️.\n"
