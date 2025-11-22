@@ -1,0 +1,99 @@
+# Semantic Layer Definition: Sessions Table
+# Defines the sessions data model with dimensions and measures
+
+model:
+  name: sessions
+  description: "User session data including activity types, duration, and engagement metrics"
+  table: sessions
+  schema: public
+  
+  columns:
+    - name: session_id
+      type: integer
+      description: "Unique identifier for each session"
+      primary_key: true
+      
+    - name: user_id
+      type: integer
+      description: "Foreign key to users table"
+      foreign_key: true
+      
+    - name: activity_type
+      type: string
+      description: "Type of activity performed during the session"
+      dimension: true
+      
+    - name: duration_minutes
+      type: decimal
+      description: "Duration of session in minutes"
+      measure: true
+      
+    - name: session_date
+      type: timestamp
+      description: "Timestamp when session started"
+      dimension: true
+
+  dimensions:
+    - name: activity_type
+      type: categorical
+      description: "Type of activity performed (e.g., browse, purchase, support)"
+      
+    - name: session_date
+      type: date
+      description: "Date of session"
+      
+    - name: session_month
+      type: date
+      description: "Month of session for trend analysis"
+      sql: "DATE_TRUNC('month', session_date)"
+      
+    - name: session_year
+      type: integer
+      description: "Year of session"
+      sql: "EXTRACT(YEAR FROM session_date)"
+
+  measures:
+    - name: total_sessions
+      type: count
+      description: "Total number of sessions"
+      sql: "COUNT(DISTINCT session_id)"
+      
+    - name: active_users
+      type: count
+      description: "Number of distinct users with at least one session"
+      sql: "COUNT(DISTINCT user_id)"
+      
+    - name: average_duration
+      type: average
+      description: "Average session duration in minutes"
+      sql: "AVG(duration_minutes)"
+      
+    - name: total_duration_minutes
+      type: sum
+      description: "Total duration of all sessions in minutes"
+      sql: "SUM(duration_minutes)"
+      
+    - name: sessions_by_activity
+      type: count
+      description: "Number of sessions grouped by activity type"
+      sql: "COUNT(DISTINCT session_id)"
+      group_by: ["activity_type"]
+      
+    - name: duration_by_activity
+      type: sum
+      description: "Total duration in minutes grouped by activity type"
+      sql: "SUM(duration_minutes)"
+      group_by: ["activity_type"]
+      
+    - name: avg_session_minutes
+      type: average
+      description: "Average session duration in minutes"
+      sql: "AVG(duration_minutes)"
+
+  relationships:
+    - type: many_to_one
+      from: sessions
+      to: users
+      foreign_key: user_id
+      description: "Many sessions belong to one user"
+

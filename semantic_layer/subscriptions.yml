@@ -1,0 +1,122 @@
+# Semantic Layer Definition: Subscriptions Table
+# Defines the subscriptions data model with dimensions and measures
+
+model:
+  name: subscriptions
+  description: "User subscriptions including plan details, start/end dates, and lifecycle status"
+  table: subscriptions
+  schema: public
+  
+  columns:
+    - name: subscription_id
+      type: integer
+      description: "Unique identifier for each subscription"
+      primary_key: true
+      
+    - name: user_id
+      type: integer
+      description: "Foreign key to users table"
+      foreign_key: true
+      
+    - name: plan
+      type: string
+      description: "Subscription plan name (e.g., basic, premium, enterprise)"
+      dimension: true
+      
+    - name: start_date
+      type: date
+      description: "Date when subscription started"
+      dimension: true
+      
+    - name: end_date
+      type: date
+      description: "Date when subscription ended (NULL if still active)"
+      dimension: true
+      nullable: true
+
+  dimensions:
+    - name: plan
+      type: categorical
+      description: "Subscription plan type"
+      
+    - name: start_date
+      type: date
+      description: "Subscription start date"
+      
+    - name: end_date
+      type: date
+      description: "Subscription end date"
+      
+    - name: subscription_status
+      type: categorical
+      description: "Current status of subscription (active, churned)"
+      sql: |
+        CASE 
+          WHEN end_date IS NULL OR end_date > CURRENT_DATE THEN 'active'
+          WHEN end_date <= CURRENT_DATE THEN 'churned'
+        END
+      
+    - name: subscription_month
+      type: date
+      description: "Month of subscription start for trend analysis"
+      sql: "DATE_TRUNC('month', start_date)"
+
+  measures:
+    - name: total_subscriptions
+      type: count
+      description: "Total number of subscriptions"
+      sql: "COUNT(DISTINCT subscription_id)"
+      
+    - name: active_subscriptions
+      type: count
+      description: "Number of currently active subscriptions"
+      sql: |
+        COUNT(DISTINCT CASE 
+          WHEN start_date <= CURRENT_DATE 
+            AND (end_date IS NULL OR end_date > CURRENT_DATE) 
+          THEN subscription_id 
+        END)
+      
+    - name: churned_subscriptions
+      type: count
+      description: "Number of churned subscriptions"
+      sql: |
+        COUNT(DISTINCT CASE 
+          WHEN end_date IS NOT NULL AND end_date <= CURRENT_DATE 
+          THEN subscription_id 
+        END)
+      
+    - name: churn_rate
+      type: percentage
+      description: "Percentage of subscriptions that have churned"
+      sql: |
+        CASE 
+          WHEN COUNT(DISTINCT subscription_id) > 0 
+          THEN (COUNT(DISTINCT CASE WHEN end_date IS NOT NULL AND end_date <= CURRENT_DATE THEN subscription_id END)::FLOAT / 
+                COUNT(DISTINCT subscription_id)::FLOAT * 100)
+          ELSE 0 
+        END
+      
+    - name: new_subscriptions
+      type: count
+      description: "Number of new subscriptions in a given period"
+      sql: "COUNT(DISTINCT subscription_id)"
+      
+    - name: active_by_plan
+      type: count
+      description: "Number of active subscriptions by plan"
+      sql: |
+        COUNT(DISTINCT CASE 
+          WHEN start_date <= CURRENT_DATE 
+            AND (end_date IS NULL OR end_date > CURRENT_DATE) 
+          THEN subscription_id 
+        END)
+      group_by: ["plan"]
+
+  relationships:
+    - type: many_to_one
+      from: subscriptions
+      to: users
+      foreign_key: user_id
+      description: "Many subscriptions belong to one user"
+

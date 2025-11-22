@@ -1,0 +1,78 @@
+# Semantic Layer Definition: Users Table
+# Defines the users data model with dimensions and measures
+
+model:
+  name: users
+  description: "User accounts and their attributes including geography and device information"
+  table: users
+  schema: public
+  
+  columns:
+    - name: user_id
+      type: integer
+      description: "Unique identifier for each user"
+      primary_key: true
+      
+    - name: country
+      type: string
+      description: "Country where the user is located"
+      dimension: true
+      
+    - name: device_type
+      type: string
+      description: "Type of device used by the user (e.g., mobile, desktop, tablet)"
+      dimension: true
+      
+    - name: created_at
+      type: timestamp
+      description: "Timestamp when the user account was created"
+      dimension: true
+
+  dimensions:
+    - name: country
+      type: categorical
+      description: "User's country for geographic analysis"
+      
+    - name: device_type
+      type: categorical
+      description: "Device type for device mix analysis"
+      
+    - name: signup_date
+      type: date
+      description: "Date when user signed up"
+      sql: "DATE(created_at)"
+
+  measures:
+    - name: total_users
+      type: count
+      description: "Total number of users"
+      sql: "COUNT(DISTINCT user_id)"
+      
+    - name: users_by_country
+      type: count
+      description: "Number of users grouped by country"
+      sql: "COUNT(DISTINCT user_id)"
+      group_by: ["country"]
+      
+    - name: users_by_device
+      type: count
+      description: "Number of users grouped by device type"
+      sql: "COUNT(DISTINCT user_id)"
+      group_by: ["device_type"]
+
+  relationships:
+    - type: one_to_many
+      to: subscriptions
+      foreign_key: user_id
+      description: "One user can have many subscriptions"
+      
+    - type: one_to_many
+      to: payments
+      foreign_key: user_id
+      description: "One user can have many payments"
+      
+    - type: one_to_many
+      to: sessions
+      foreign_key: user_id
+      description: "One user can have many sessions"
+

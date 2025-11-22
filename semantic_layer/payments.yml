@@ -1,0 +1,100 @@
+# Semantic Layer Definition: Payments Table
+# Defines the payments data model with dimensions and measures
+
+model:
+  name: payments
+  description: "Payment transactions including amounts, dates, and payment methods"
+  table: payments
+  schema: public
+  
+  columns:
+    - name: payment_id
+      type: integer
+      description: "Unique identifier for each payment"
+      primary_key: true
+      
+    - name: user_id
+      type: integer
+      description: "Foreign key to users table"
+      foreign_key: true
+      
+    - name: amount_usd
+      type: decimal
+      description: "Payment amount in USD"
+      measure: true
+      
+    - name: payment_date
+      type: date
+      description: "Date when payment was processed"
+      dimension: true
+      
+    - name: payment_method
+      type: string
+      description: "Method of payment (e.g., credit_card, paypal, bank_transfer)"
+      dimension: true
+
+  dimensions:
+    - name: payment_date
+      type: date
+      description: "Date of payment transaction"
+      
+    - name: payment_month
+      type: date
+      description: "Month of payment for trend analysis"
+      sql: "DATE_TRUNC('month', payment_date)"
+      
+    - name: payment_method
+      type: categorical
+      description: "Method used for payment"
+      
+    - name: payment_year
+      type: integer
+      description: "Year of payment"
+      sql: "EXTRACT(YEAR FROM payment_date)"
+
+  measures:
+    - name: total_revenue
+      type: sum
+      description: "Total revenue from all payments"
+      sql: "COALESCE(SUM(amount_usd), 0)"
+      
+    - name: total_payments
+      type: count
+      description: "Total number of payment transactions"
+      sql: "COUNT(DISTINCT payment_id)"
+      
+    - name: average_payment
+      type: average
+      description: "Average payment amount"
+      sql: "AVG(amount_usd)"
+      
+    - name: revenue_by_method
+      type: sum
+      description: "Total revenue grouped by payment method"
+      sql: "COALESCE(SUM(amount_usd), 0)"
+      group_by: ["payment_method"]
+      
+    - name: revenue_by_month
+      type: sum
+      description: "Total revenue grouped by month"
+      sql: "COALESCE(SUM(amount_usd), 0)"
+      group_by: ["payment_month"]
+      
+    - name: payment_count
+      type: count
+      description: "Number of payments"
+      sql: "COUNT(DISTINCT payment_id)"
+
+  relationships:
+    - type: many_to_one
+      from: payments
+      to: users
+      foreign_key: user_id
+      description: "Many payments belong to one user"
+      
+    - type: many_to_one
+      from: payments
+      to: subscriptions
+      foreign_key: subscription_id
+      description: "Many payments can be associated with a subscription (if subscription_id exists)"
+

@@ -1,0 +1,87 @@
+# Main Semantic Layer Configuration
+# This file defines the overall semantic layer structure and references all models
+
+semantic_layer:
+  name: "Talk-to-Your-Data Slackbot Semantic Layer"
+  version: "1.0.0"
+  description: "Semantic layer definitions for users, subscriptions, payments, and sessions data"
+  
+  database:
+    type: postgresql
+    schema: public
+    
+  models:
+    - name: users
+      file: users.yml
+      description: "User accounts and attributes"
+      
+    - name: subscriptions
+      file: subscriptions.yml
+      description: "User subscriptions and lifecycle"
+      
+    - name: payments
+      file: payments.yml
+      description: "Payment transactions and revenue"
+      
+    - name: sessions
+      file: sessions.yml
+      description: "User session data and engagement"
+
+  # Global measures that can be used across models
+  global_measures:
+    - name: total_users
+      model: users
+      description: "Total number of users"
+      
+    - name: total_revenue
+      model: payments
+      description: "Total revenue from all payments"
+      
+    - name: active_subscriptions
+      model: subscriptions
+      description: "Number of active subscriptions"
+      
+    - name: churn_rate
+      model: subscriptions
+      description: "Percentage of churned subscriptions"
+      
+    - name: avg_session_minutes
+      model: sessions
+      description: "Average session duration in minutes"
+
+  # Common dimensions for filtering
+  global_dimensions:
+    - name: country
+      model: users
+      description: "User's country"
+      
+    - name: plan
+      model: subscriptions
+      description: "Subscription plan type"
+      
+    - name: payment_method
+      model: payments
+      description: "Payment method"
+      
+    - name: activity_type
+      model: sessions
+      description: "Session activity type"
+
+  # Time dimensions for trend analysis
+  time_dimensions:
+    - name: signup_date
+      model: users
+      type: date
+      
+    - name: start_date
+      model: subscriptions
+      type: date
+      
+    - name: payment_date
+      model: payments
+      type: date
+      
+    - name: session_date
+      model: sessions
+      type: date
+
